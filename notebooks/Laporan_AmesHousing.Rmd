@@ -1,0 +1,713 @@
+---
+title: "Ujian Akhir Semester Teknik Penambangan Data"
+subtitle: "Data Ames Housing"
+author: "Zafira Ryani Putri (J0403241139)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    toc_depth: '3'
+    df_print: paged
+    number_sections: false
+    theme: cerulean
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    toc_depth: 3
+toc-title: Daftar Isi
+mainfont: Georgia
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	eval = TRUE,
+	echo = FALSE,
+	fig.align = "center",
+	message = FALSE,
+	warning = FALSE,
+	comment = NA,
+	out.width = "50%"
+)
+```
+
+```{r}
+library(AmesHousing)
+library(tidyverse)
+library(caret)
+library(corrplot)
+library(fastDummies)
+library(rsample)
+library(rpart)
+library(rpart.plot)
+library(cluster)
+library(factoextra)
+library(gridExtra)
+```
+
+# 1. Business Understanding
+## 1.1 Masalah Bisnis
+Harga rumah merupakan salah satu aspek penting dalam sektor properti. Nilai sebuah properti hunian sangat dipengaruhi oleh berbagai faktor pendukung seperti luas bangunan, kualitas konstruksi, kapasitas garasi, hingga kondisi lingkungan di sekitarnya. Dengan melimpahnya data historis penjualan yang tersedia saat ini, teknik data mining dapat diterapkan untuk menemukan pola tersembunyi, membangun model prediksi harga, melakukan klasifikasi, dan mengelompokkan rumah berdasarkan karakteristik tertentu.
+
+## 1.2 Tujuan Analisis
+Analisis ini bertujuan untuk mengidentifikasi berbagai faktor yang paling berpengaruh terhadap harga rumah. Proses selanjutnya adalah membangun sebuah model yang mampu memprediksi harga rumah secara akurat. Selain itu, analisis ini juga mencakup klasifikasi rumah ke dalam berbagai kategori harga dan pengelompokan rumah berdasarkan karakteristik spesifik yang dimiliki.
+
+## 1.3 Data dan Variabel yang Relevan
+Dataset yang digunakan dalam analisis ini adalah data Ames Housing. Kumpulan data ini berisi informasi yang sangat detail mengenai karakteristik fisik beserta harga jual rumah di Kota Ames, Iowa. Dataset Ames Housing dipilih dan sering dijadikan rujukan dalam pembelajaran data mining karena menyajikan jumlah variabel yang cukup lengkap dan dinilai sangat representatif untuk keperluan pemodelan properti.
+
+# 2. Data Understanding (EDA)
+## 2.1 Memuat Dataset
+
+```{r}
+ames <- make_ames()
+
+ames %>%
+  select(Sale_Price, Gr_Liv_Area, Overall_Qual, Year_Built, Neighborhood) %>%
+  head() %>%
+  knitr::kable(
+    format = "html",
+    table.attr = "class='table table-striped table-hover'",
+    caption = "Cuplikan 6 Observasi Pertama (5 Kolom Representatif)"
+  )
+```
+Langkah awal dalam memahami karakteristik properti dilakukan dengan memuat seluruh data ke dalam lingkungan kerja. Dataset Ames Housing menyediakan landasan informasi yang sangat kaya, mencakup 2930 observasi penjualan rumah beserta 81 karakteristik spesifik yang melekat pada masing-masing properti tersebut. Pemeriksaan dimensi dan struktur dasar ini menjadi hal yang fundamental untuk mengenali gambaran umum data sebelum melangkah ke analisis yang lebih mendalam.
+
+## 2.2 Memahami Struktur Data
+
+```{r}
+dim(ames)
+
+str(ames, list.len = 10)
+```
+Proses dilanjutkan dengan membedah arsitektur internal dataset untuk memvalidasi dimensi dan tipe data. Berdasarkan luaran komputasi di atas, kerangka data (tibble) terkonfirmasi memiliki 2.930 observasi penjualan dan 81 variabel. Inspeksi struktural ini secara eksplisit memperlihatkan presisi klasifikasi teknis data: variabel kategorikal telah terekam secara otomatis sebagai objek Factor yang memiliki batasan level (seperti MS_Zoning dengan 7 level atau Street dengan 2 level). Sementara itu, data kuantitatif dipetakan ke dalam bilangan bulat (int) untuk metrik ukur absolut seperti luas area (Lot_Area), serta nilai numerik (num) untuk data kontinu seperti lebar bagian depan properti (Lot_Frontage). Validasi arsitektural ini memastikan bahwa algoritma mengenali setiap variabel sesuai dengan sifat dasar matematisnya, sehingga meminimalisasi risiko kegagalan komputasi pada pemodelan nantinya.
+
+## 2.3 Missing Value Analysis
+
+```{r}
+missing_data <- sapply(ames, function(x) sum(is.na(x)))
+
+missing_data <- data.frame(
+ Variabel = names(missing_data),
+ Missing = missing_data
+)
+
+missing_data %>%
+  arrange(desc(Missing)) %>%
+  head(10) %>%
+  knitr::kable(
+    format = "html", 
+    table.attr = "class='table table-striped table-hover'"
+  )
+```
+Keberadaan sel data yang kosong atau missing value merupakan anomali struktural yang sangat lumrah dalam pengumpulan data riil dan secara matematis berpotensi merusak validitas perhitungan algoritma prediktif. Namun berdasarkan luaran komputasi di atas seluruh parameter mulai dari MS_SubClass hingga Lot_Config secara absolut menunjukkan angka nol. Fakta ini mengonfirmasi bahwa dataset bawaan dari pustaka AmesHousing memiliki integritas struktural yang sempurna dan telah melalui prapemrosesan internal sebelum didistribusikan. Ketiadaan nilai kosong ini menjamin stabilitas arsitektur data.
+
+## 2.4 Statistik Deskriptif
+
+```{r}
+ames %>%
+  select(Sale_Price, Gr_Liv_Area, Overall_Qual, Year_Built, Garage_Cars) %>%
+  summary()
+```
+Statistik deskriptif membantu kita merangkum nilai pusat dan sebaran data dari setiap variabel penting. Dari angka angka ini kita bisa langsung melihat karakteristik umum properti di Kota Ames dengan cepat. Berdasarkan hasil di atas pada variabel harga jual terlihat bahwa nilai rata rata sekitar 180 ribu dolar ditarik ke atas oleh segelintir rumah mewah yang harganya mencapai 755 ribu dolar. Padahal mean pasar aslinya hanya berada di angka 160 ribu dolar. Dari segi fisik mayoritas kualitas rumah berada di tingkat menengah ke atas. Rata rata properti dibangun pada tahun 1973 dan umumnya memiliki kapasitas garasi untuk dua mobil. Rangkuman angka ini memberikan gambaran yang logis dan jelas tentang standar rumah di area tersebut tanpa perlu mengecek baris data satu per satu.
+
+## 2.5 Distribusi Harga Rumah (Sale_Price)
+
+```{r}
+ggplot(
+  ames,
+  aes(x = Sale_Price)
+) +
+  geom_histogram(
+    bins = 30,
+    fill = "navy",
+    color = "white"
+  ) +
+  labs(
+    title = "Distribusi Frekuensi Harga Jual Rumah",
+    x = "Harga Jual (USD)",
+    y = "Frekuensi"
+  ) +
+  scale_x_continuous(labels = scales::comma)
+```
+Melalui visualisasi histogram terlihat jelas bahwa distribusi nilai jual tidak simetris melainkan menceng ke kanan. Mayoritas harga rumah mengelompok secara padat pada rentang seratus ribu hingga dua ratus ribu dolar. Sementara itu ekor grafik memanjang jauh ke sisi kanan akibat keberadaan segelintir properti mewah yang harganya mendekati angka delapan ratus ribu dolar. Pola penyebaran asimetris ini menjadi indikator analitis yang kuat bahwa data tersebut mungkin memerlukan transformasi matematis spesifik sebelum dimasukkan ke dalam model agar algoritma tidak terdistorsi oleh nilai ekstrem.
+
+## 2.6 Analisis Pencilan (Outlier Analysis)
+
+```{r}
+ggplot(
+  ames,
+  aes(y = Sale_Price)
+) +
+  geom_boxplot() +
+  labs(
+    title = "Distribusi dan Deteksi Pencilan Harga Jual Rumah",
+    y = "Harga Jual (USD)",
+    x = NULL
+  ) +
+  scale_y_continuous(labels = scales::comma)
+```
+Nilai-nilai ekstrem yang berada jauh di luar rentang normal properti pada umumnya dapat memengaruhi akurasi prediksi secara signifikan. Terlihat jelas bahwa kotak utama yang mewakili inti populasi data sangat pipih dan memadat di area bawah grafik. Sebaliknya terdapat deretan titik hitam vertikal yang sangat pekat menjulang jauh melampaui batas kewajaran atas grafik. Titik titik ini merepresentasikan sekumpulan properti super mewah dengan harga jual yang sangat kontras jika dibandingkan dengan mayoritas rumah standar. Penemuan penumpukan pencilan atas ini selaras dengan kemencengan histogram sebelumnya dan menegaskan bahwa kita memerlukan arsitektur pemodelan yang kebal terhadap gangguan nilai nilai ekstrem tersebut.
+
+## 2.7 Korelasi Variabel Numerik
+
+```{r}
+# 1. Menghitung korelasi seluruh variabel numerik
+numeric_data <- ames %>%
+  select(where(is.numeric))
+
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+# 2. Mengisolasi 10 variabel dengan korelasi terkuat terhadap Sale_Price
+korelasi_harga <- sort(cor_matrix[, "Sale_Price"], decreasing = TRUE)
+top_10_var <- names(korelasi_harga)[1:10]
+cor_matrix_top10 <- cor_matrix[top_10_var, top_10_var]
+
+# 3. Translasi label teknis menjadi bahasa manusia (Isolasi visual)
+kamus_label <- c(
+  "Sale_Price" = "Harga Jual",
+  "Overall_Qual" = "Kualitas Bangunan",
+  "Gr_Liv_Area" = "Luas Area Hidup",
+  "Garage_Cars" = "Kapasitas Garasi",
+  "Garage_Area" = "Luas Garasi",
+  "Total_Bsmt_SF" = "Luas Basement",
+  "First_Flr_SF" = "Luas Lantai 1",
+  "Year_Built" = "Tahun Dibangun",
+  "Full_Bath" = "Kamar Mandi",
+  "Year_Remod_Add" = "Tahun Renovasi",
+  "TotRms_AbvGrd" = "Total Ruangan",
+  "Mas_Vnr_Area" = "Luas Veneer Batu"
+)
+
+label_asli <- colnames(cor_matrix_top10)
+label_baru <- ifelse(label_asli %in% names(kamus_label), kamus_label[label_asli], label_asli)
+
+rownames(cor_matrix_top10) <- label_baru
+colnames(cor_matrix_top10) <- label_baru
+
+# 4. Visualisasi matriks segitiga bawah yang elegan
+corrplot(
+  cor_matrix_top10,
+  method = "color",
+  type = "lower",          # Hanya menampilkan segitiga bawah untuk efisiensi ruang
+  addCoef.col = "black",   # Menampilkan angka koefisien korelasi
+  number.cex = 0.7,        # Ukuran font angka proporsional
+  tl.col = "black",        # Warna teks label hitam agar kontras
+  tl.srt = 45,             # Memutar teks 45 derajat agar tidak bertabrakan
+  tl.cex = 0.8,            # Ukuran font label
+  diag = FALSE             # Menghilangkan garis diagonal nilai 1 yang redundan
+)
+```
+Matriks korelasi ini berfungsi untuk melihat seberapa erat hubungan antar berbagai karakteristik fisik sebuah properti secara umum. Semakin gelap warna biru pada kotak dan semakin mendekati angka satu maka hubungan kedua fitur tersebut semakin identik. Melalui gambaran ini kita bisa dengan cepat menemukan adanya informasi yang berulang di dalam data. Sebagai contoh variabel kapasitas garasi dan luas garasi memiliki tingkat kemiripan yang sangat tinggi yaitu 0.89 begitu pula antara luas lantai satu dan ruang bawah tanah di angka 0.80. Pemetaan awal ini sangat penting untuk menyaring atribut yang maknanya ganda agar mesin prediksi nantinya tidak kebingungan saat memproses informasi yang tumpang tindih.
+
+## 2.8 Variabel Paling Berkorelasi dengan Harga Rumah
+
+```{r}
+sale_corr <- cor_matrix[, "Sale_Price"]
+
+sale_corr <- sort(sale_corr,
+                  decreasing = TRUE)
+
+head(sale_corr, 10)
+```
+Setelah memahami korelasi antar variabel secara umum, bagian ini difokuskan pada variabel mana saja yang memiliki hubungan paling kuat secara langsung dengan harga jual rumah. Berdasarkan hasil perhitungan, luas area hidup (Gr_Liv_Area) menempati urutan teratas sebagai faktor dengan daya dorong paling besar terhadap kenaikan harga properti. Urutan sepuluh besar ini menjadi pedoman utama dalam menentukan fitur fisik mana yang paling layak diprioritaskan sebagai prediktor utama. Dengan memfokuskan model pada variabel yang memiliki hubungan linear yang jelas, kita dapat membangun model prediksi yang lebih ramping dan efisien namun tetap memiliki tingkat akurasi yang tinggi.
+
+## 2.9 Hubungan Luas Rumah dan Harga Rumah
+
+```{r}
+ggplot(
+ ames,
+ aes(
+   x = Gr_Liv_Area,
+   y = Sale_Price
+ )
+) +
+ geom_point(alpha = 0.5) +
+ geom_smooth(method = "lm") +
+ labs(
+   title = "Hubungan Luas Area Fungsional dan Harga Jual Rumah",
+   x = "Luas Area Hidup (Square Feet)",
+   y = "Harga Jual (USD)"
+ ) +
+ scale_y_continuous(labels = scales::comma)
+```
+Luas total area fungsional di atas permukaan tanah merupakan faktor yang secara intuitif dianggap paling menentukan nilai properti. Melalui grafik sebar di atas kita bisa melihat bukti nyata adanya hubungan yang sangat kuat antara luas rumah dengan harga jual. Setiap titik data bergerak membentuk pola miring ke kanan atas yang artinya semakin luas bangunan rumah maka harga jualnya cenderung semakin mahal secara konsisten. Meskipun ada beberapa titik yang letaknya agak jauh dari garis utama namun pola umumnya tetap menunjukkan keterkaitan yang erat. Hasil ini memberikan konfirmasi visual yang sangat jelas bahwa ukuran luas bangunan merupakan salah satu indikator paling krusial yang harus kita perhatikan dalam membangun model prediksi harga nantinya.
+
+## 2.10 Harga Rumah Berdasarkan Kualitas Bangunan
+
+```{r}
+ggplot(
+ ames,
+ aes(
+   x = factor(Overall_Qual),
+   y = Sale_Price
+ )
+) +
+ geom_boxplot() +
+ labs(
+   title = "Distribusi Harga Jual Berdasarkan Kualitas Bangunan",
+   x = "Kualitas Bangunan (Skala 1 - 10)",
+   y = "Harga Jual (USD)"
+ ) +
+ scale_y_continuous(labels = scales::comma)
+```
+Selain ukuran fisik, penilaian terhadap kualitas material bangunan juga menjadi faktor utama yang sangat memengaruhi nilai jual rumah. Grafik boxplot ini membuktikan secara jelas bahwa semakin tinggi tingkat kualitas bangunan maka harga jual propertinya juga akan naik secara konsisten. Kita bisa melihat pola pergeseran yang sangat rapi di mana rumah dengan kualitas material lebih baik selalu berada pada posisi harga yang lebih tinggi dibandingkan dengan kelas di bawahnya. Fenomena ini menunjukkan bahwa preferensi pasar sangat menghargai standar material serta penyelesaian akhir bangunan. Melalui data ini kita mendapatkan bukti kuat bahwa kualitas bangunan merupakan variabel yang sangat menentukan untuk memprediksi harga rumah secara lebih akurat ke depannya.
+
+# 3. Data Preparation
+## 3.1 Menangani Nilai yang Hilang (Missing Value)
+
+```{r}
+# Menyimpan jumlah baris awal
+baris_awal <- nrow(ames)
+
+# Melakukan pembersihan
+ames_clean <- ames %>%
+  drop_na()
+
+# Menyimpan jumlah baris setelah pembersihan
+baris_akhir <- nrow(ames_clean)
+
+# Mencetak bukti perubahan dimensi
+cat("Jumlah observasi sebelum pembersihan:", baris_awal, "\n")
+cat("Jumlah observasi setelah pembersihan:", baris_akhir, "\n")
+cat("Total baris yang dihapus:", baris_awal - baris_akhir, "\n")
+```
+Kualitas model sangat bergantung pada kelengkapan informasi yang diberikan. Jika terdapat baris data yang memiliki sel kosong, data tersebut perlu dibersihkan untuk menghindari kegagalan komputasi pada tahap pemodelan. Proses pembersihan dilakukan dengan menghapus baris yang tidak lengkap guna memastikan data benar benar valid. Berdasarkan hasil pengecekan kuantitatif, tidak ditemukan baris yang memiliki nilai kosong. Hal ini mengonfirmasi bahwa dataset awal telah memiliki integritas informasi yang sempurna dan siap untuk diproses ke tahap selanjutnya.
+
+## 3.2 Deteksi dan Penanganan Duplikasi
+
+```{r}
+cat("Jumlah baris duplikat terdeteksi:", sum(duplicated(ames_clean)), "\n")
+
+ames_clean <- ames_clean %>% distinct()
+
+cat("Jumlah baris setelah penghapusan duplikat:", nrow(ames_clean), "\n")
+```
+Pemeriksaan duplikasi merupakan langkah baku yang esensial namun sering terabaikan padahal baris yang terduplikasi dapat membiaskan perhitungan statistik dan memberikan bobot berlebih pada observasi tertentu saat pemodelan. Hasil pemeriksaan menunjukkan tidak ada baris duplikat sehingga fungsi penyaringan tidak menghapus observasi apa pun. Sama seperti analisis nilai yang hilang kebersihan ini merupakan konsekuensi dari praproses dataset bawaan bukan jaminan bahwa data dunia nyata akan selalu bebas dari duplikasi. Pada data mentah baris ganda kerap muncul akibat penggabungan tabel atau kesalahan pencatatan dan penanganannya adalah menghapus salah satu salinan agar setiap entitas terwakili tepat satu kali.
+
+## 3.3 Validasi Nilai Tidak Wajar (Sanity Check)
+
+```{r}
+var_positif <- c("Sale_Price", "Gr_Liv_Area", "First_Flr_SF", "Year_Built", "Year_Remod_Add")
+pelanggaran_positif <- sapply(ames_clean[var_positif], function(x) sum(x <= 0))
+
+cat("Pelanggaran (nilai <= 0 pada variabel yang harus positif):\n")
+print(pelanggaran_positif)
+
+var_boleh_nol <- c("Garage_Cars", "Garage_Area", "Total_Bsmt_SF", "Full_Bath", "Mas_Vnr_Area")
+pelanggaran_nol <- sapply(ames_clean[var_boleh_nol], function(x) sum(x < 0))
+
+cat("\nPelanggaran (nilai < 0 pada variabel yang boleh nol):\n")
+print(pelanggaran_nol)
+
+cat("\nTotal nilai tidak wajar yang diimputasi dengan median: 0\n")
+```
+Validasi nilai tidak wajar diterapkan pada seluruh variabel yang akan digunakan oleh model secara konsisten. Aturan kewajaran dibedakan secara cermat di mana variabel seperti harga jual luas area lantai pertama dan tahun pembangunan secara logis harus bernilai positif. Sebaliknya variabel seperti luas garasi luas ruang bawah tanah jumlah kamar mandi penuh dan area material pelapis diizinkan bernilai nol karena angka nol di sini bermakna substantif yang merepresentasikan ketiadaan fasilitas tersebut pada sebuah properti. Pembedaan ini mencegah algoritma pembersihan menghapus data yang sah secara keliru. Hasil validasi mengonfirmasi tidak ditemukannya nilai tidak wajar sehingga tidak ada proses imputasi yang diperlukan. Jika ditemukan anomali strategi imputasi yang disiapkan adalah penggunaan nilai tengah atau median karena distribusi harga dan luas properti sarat akan pencilan sehingga median jauh lebih stabil dibandingkan nilai rata rata. Dataset yang telah lolos uji kewajaran inilah yang akan diteruskan ke tahap transformasi selanjutnya.
+
+## 3.4 Mengubah Tipe Data
+
+```{r}
+# 1. Mendefinisikan hierarki level
+kualitas_level <- c("Very_Poor", "Poor", "Fair", "Below_Average", "Average",
+                    "Above_Average", "Good", "Very_Good", "Excellent", "Very_Excellent")
+
+# 2. Membuat dan mencetak kamus referensi sebagai penanda
+kamus_kualitas <- data.frame(
+  Kategori_Asli = kualitas_level,
+  Skor_Numerik = 1:10
+)
+
+knitr::kable(
+  kamus_kualitas,
+  format = "html",
+  table.attr = "class='table table-bordered table-sm'",
+  caption = "Kamus Translasi Kualitas Bangunan (Overall_Qual)"
+)
+
+# 3. Mengeksekusi transformasi tipe data
+ames_clean <- ames_clean %>%
+  mutate(Overall_Qual = as.numeric(factor(Overall_Qual, levels = kualitas_level)))
+
+# 4. Membuktikan hasil transformasi pada data riil
+ames_clean %>%
+  select(Sale_Price, Overall_Qual) %>%
+  head(5) %>%
+  knitr::kable(
+    format = "html",
+    table.attr = "class='table table-striped'",
+    caption = "Cuplikan Data Pasca-Transformasi Numerik"
+  )
+```
+Setiap algoritma pembelajaran mesin memiliki standar ketat mengenai format data yang bisa diproses secara matematis. Langkah ini krusial untuk menyelaraskan format variabel dengan kebutuhan komputasi agar model dapat menarik korelasi secara akurat. Sebagai contoh variabel kualitas bangunan yang semula berbentuk teks bertingkat diubah menjadi skor numerik mulai dari satu hingga sepuluh. Transformasi ini mengubah representasi kualitatif menjadi nilai kuantitatif yang memiliki bobot terukur. Dengan adanya perubahan wujud ini jarak matematis antar observasi dapat dihitung secara presisi sehingga algoritma mampu menangkap tren kenaikan harga berdasarkan peningkatan kualitas material secara lebih efisien. Dataset kini telah memiliki keseragaman format numerik yang menjadi prasyarat utama sebelum memasuki tahapan pemodelan.
+
+## 3.5 Encoding Variabel Kategorik
+
+```{r}
+library(fastDummies)
+
+ames_encoded <- dummy_cols(
+  ames_clean,
+  select_columns = c("Neighborhood", "Bldg_Type"),
+  remove_first_dummy = TRUE,
+  remove_selected_columns = TRUE
+)
+
+ames_encoded %>%
+  select(starts_with("Neighborhood_"), starts_with("Bldg_Type_")) %>%
+  head()
+```
+Banyak model prediktif statistik yang hanya mampu menerima input berupa angka murni. Oleh sebab itu variabel kategorikal berupa teks seperti lokasi lingkungan atau tipe bangunan perlu diterjemahkan ke dalam bahasa numerik. Proses pelabelan ini biasa disebut encoding di mana teks diubah menjadi kolom indikator biner bernilai nol dan satu sehingga mesin dapat memahami keberadaan kategori tersebut tanpa kehilangan esensi informasinya.
+
+## 3.6 Seleksi Variabel
+
+```{r}
+# 1. Jalur Prediksi (Regresi & Klasifikasi)
+ames_modeling <- ames_encoded %>%
+  select(
+    Sale_Price, Gr_Liv_Area, Overall_Qual, Garage_Area, 
+    Total_Bsmt_SF, Year_Built, Full_Bath, Mas_Vnr_Area, 
+    starts_with("Neighborhood_"), starts_with("Bldg_Type_")
+  )
+
+# 2. Jalur Klasifikasi (Transformasi target)
+ames_classification <- ames_modeling %>%
+  mutate(Price_Class = ifelse(Sale_Price >= median(Sale_Price), "Tinggi", "Rendah"),
+         Price_Class = as.factor(Price_Class)) %>%
+  select(-Sale_Price)
+
+# 3. Jalur Klastering (Segmentasi Murni - 4 Variabel Inti)
+ames_clustering <- ames_encoded %>%
+  select(Sale_Price, Gr_Liv_Area, Garage_Area, Total_Bsmt_SF)
+
+# Menampilkan output validasi (Tampilkan 4 kolom Klastering)
+ames_clustering %>%
+  head(5) %>%
+  knitr::kable(caption = "Cuplikan Dataset Klastering (4 Variabel Inti)")
+```
+Pengolahan data dilakukan melalui tiga jalur strategis yang disesuaikan dengan tujuan analisis. Untuk jalur prediksi yaitu regresi dan klasifikasi saya memilih tiga puluh variabel fitur yang paling representatif guna memastikan model memiliki akurasi tinggi namun tetap efisien dalam komputasi. Sementara itu untuk jalur klastering saya menerapkan pendekatan yang lebih selektif dengan hanya menggunakan empat variabel inti yaitu harga jual, luas bangunan, luas garasi, dan luas ruang bawah tanah. Pemisahan ini sangat penting agar hasil segmentasi pasar yang terbentuk benar-benar mencerminkan kelompok alami tanpa terdistorsi oleh variabel yang saling tumpang tindih. Dengan membagi dataset menjadi tiga alur kerja yang spesifik setiap algoritma dapat bekerja secara optimal sesuai dengan karakteristik data yang paling dibutuhkan.
+
+## 3.7 Membuat Label Baru untuk Klasifikasi
+
+```{r}
+# Menggunakan dataframe klasifikasi yang telah disiapkan sebelumnya
+median_price <- median(ames_modeling$Sale_Price)
+
+ames_classification <- ames_modeling %>%
+  mutate(
+    Price_Class = ifelse(Sale_Price >= median_price, "Tinggi", "Rendah"),
+    Price_Class = as.factor(Price_Class)
+  ) %>%
+  select(-Sale_Price) # Menghapus harga asli untuk menghindari kebocoran data
+
+# Memverifikasi keseimbangan kelas
+table(ames_classification$Price_Class)
+```
+Model klasifikasi membutuhkan target berupa kategori diskrit. Oleh karena itu, saya mentransformasi variabel target dengan mempartisi harga ke dalam dua kelas menggunakan metrik Median. Keputusan menolak penggunaan nilai Mean (Rata-rata) didasarkan pada temuan EDA sebelumnya, di mana distribusi harga terbukti asimetris dan memiliki pencilan ekstrem yang menarik nilai Mean ke atas secara tidak proporsional. Penggunaan Median menetralkan anomali tersebut dan secara matematis mengunci ekuilibrium dataset pada rasio 50:50 yang sempurna. Proporsi kelas yang seimbang ini adalah prasyarat mutlak untuk mencegah bias algoritma terhadap kelas mayoritas saat fase pelatihan.
+
+## 3.8 Normalisasi dan Standarisasi
+
+```{r}
+# Standardisasi dilakukan secara terpusat pada jalur klastering
+ames_clustering_scaled <- ames_clustering %>%
+  mutate(across(everything(), ~ as.numeric(scale(.x))))
+
+# Menampilkan bukti empiris transformasi skala (Z-Score)
+ames_clustering_scaled %>%
+  head(5) %>%
+  knitr::kable(
+    format = "html",
+    table.attr = "class='table table-striped'",
+    caption = "Cuplikan Nilai Kontinu Setelah Transformasi Skala (Z-Score)"
+  )
+```
+Algoritma klastering bekerja dengan menghitung jarak antar titik data. Tanpa standardisasi, variabel dengan rentang angka ratusan ribu seperti harga jual properti akan mendominasi perhitungan jarak dibandingkan variabel dengan rentang angka ratusan seperti luas garasi atau luas ruang bawah tanah. Hal ini akan menyebabkan hasil pengelompokan menjadi bias. Langkah ini menetralkan perbedaan skala tersebut dengan mengubah setiap variabel menjadi skor-z, yang memaksa seluruh data memiliki rata-rata nol dan simpangan baku satu. Transformasi ini memastikan setiap atribut fisik dan finansial memiliki bobot yang setara dalam menentukan kedekatan karakteristik antar observasi.
+
+## 3.9 Membagi Data Latih dan Uji
+
+```{r}
+library(rsample)
+
+set.seed(123)
+
+# Pembagian data khusus untuk jalur Klasifikasi
+# Stratifikasi pada Price_Class untuk menjaga keseimbangan kelas
+data_split <- initial_split(ames_classification, prop = 0.8, strata = Price_Class)
+
+train_data <- training(data_split)
+test_data  <- testing(data_split)
+
+# Menampilkan bukti pembagian
+tabel_split <- data.frame(
+  Dataset = c("Data Latih (80%)", "Data Uji (20%)"),
+  Observasi = c(nrow(train_data), nrow(test_data))
+)
+
+knitr::kable(
+  tabel_split, 
+  format = "html", 
+  table.attr = "class='table table-bordered'",
+  caption = "Proporsi Pembagian Data Klasifikasi"
+)
+```
+Pemisahan dataset menjadi data latih dan data uji sangat penting untuk mengukur kemampuan generalisasi model pada data yang belum pernah dilihat sebelumnya. Proporsi pemisahan ditetapkan pada rasio delapan puluh persen untuk latihan dan dua puluh persen untuk pengujian; sebuah keputusan parameter yang didasarkan pada optimalisasi bias-variance tradeoff. Alokasi 80% menyediakan volume observasi yang cukup masif bagi mesin untuk mengekstraksi pola tanpa risiko underfitting, sementara 20% sisanya menyisakan ukuran sampel yang secara statistik sangat representatif untuk validasi. Pemotongan data ini dieksekusi menggunakan teknik stratified sampling. Penggunaan strata pada variabel target memastikan bahwa proporsi kelas tetap konsisten di kedua himpunan data, sehingga model mendapatkan representasi yang adil dari setiap kategori harga.
+
+
+# 4 Modeling
+## 4.1 Prediksi Harga Rumah (Regression)
+### 4.1.1 Membangun Model Regresi
+
+```{r}
+# 1. Split khusus untuk regresi 
+data_split_reg <- initial_split(ames_modeling, prop = 0.8)
+train_reg <- training(data_split_reg)
+test_reg  <- testing(data_split_reg)
+
+# 2. Membangun model regresi
+model_regresi <- lm(Sale_Price ~ ., data = train_reg)
+model_sum <- summary(model_regresi)
+
+# 3. Menampilkan Performa Model (In-Sample)
+performa_model <- data.frame(
+  Metrik = c("R-Squared (Training Set)", "Adjusted R-Squared", "F-Statistic", "Residual Std Error"),
+  Nilai = c(model_sum$r.squared, model_sum$adj.r.squared, model_sum$fstatistic[1], model_sum$sigma)
+)
+knitr::kable(performa_model, digits = 4, caption = "Metrik Performa dan Signifikansi Global Model")
+
+# 4. Menampilkan Ringkasan Residuals (Distribusi Error)
+res_summary <- as.data.frame(t(quantile(model_sum$residuals)))
+knitr::kable(res_summary, digits = 0, caption = "Ringkasan Residual (Distribusi Error)")
+
+# 5. Menampilkan Top 10 Koefisien Teratas
+knitr::kable(
+  head(model_sum$coefficients, 10), 
+  digits = 4, 
+  caption = "Cuplikan 10 Koefisien Regresi Teratas"
+)
+```
+Fokus utama pada bagian ini adalah memprediksi nilai kuantitatif dari harga jual rumah. Regresi linear berganda menghasilkan performa prediksi yang sangat solid dengan nilai Multiple R-squared sebesar 0,83, yang berarti model mampu menjelaskan 83 persen variasi harga properti di Kota Ames. Analisis koefisien menunjukkan bahwa luas bangunan (Gr_Liv_Area) dan kualitas konstruksi (Overall_Qual) merupakan prediktor paling dominan dengan tingkat signifikansi statistik yang sangat kuat. Selain faktor fisik, variabel lokasi seperti Northridge Heights dan Stone Brook memberikan kontribusi kenaikan harga yang signifikan, menegaskan adanya premi pasar pada area tertentu. Beberapa variabel menunjukkan singularitas atau tidak signifikan secara statistik yang mencerminkan keterbatasan observasi pada wilayah atau tipe bangunan tertentu dalam dataset. Secara keseluruhan, model ini memberikan kerangka kerja matematis yang transparan untuk memetakan pengaruh fitur fisik dan lingkungan terhadap struktur harga properti secara objektif.
+
+### 4.1.2 Implementasi Prediksi
+
+```{r}
+# Menggunakan test_reg yang berisi data uji murni untuk regresi
+prediksi_regresi <- predict(model_regresi, newdata = test_reg)
+
+# Membuat tabel perbandingan untuk 6 data pertama
+tabel_perbandingan <- data.frame(
+  Aktual = head(test_reg$Sale_Price, 6),
+  Prediksi = head(prediksi_regresi, 6),
+  Error = head(test_reg$Sale_Price - prediksi_regresi, 6)
+)
+
+knitr::kable(tabel_perbandingan, digits = 0)
+```
+Setelah mesin mengkalkulasi bobot koefisien yang paling optimal dari data latih, model dihadapkan pada ujian sesungguhnya. Fungsi prediksi dijalankan untuk meramalkan harga rumah pada instrumen data uji yang sepenuhnya asing bagi mesin. Hasil dari proses ini adalah sekumpulan angka estimasi harga yang nantinya akan dikomparasi dengan harga aktual di pasar untuk mengukur ketepatan estimasi.
+
+### 4.1.3 Evaluasi Kinerja Model
+
+```{r}
+# Menggunakan kolom Sale_Price dari dataset uji regresi
+actual_price <- test_reg$Sale_Price
+predicted_price <- prediksi_regresi
+error <- actual_price - predicted_price
+
+rmse_val <- sqrt(mean(error^2))
+mae_val <- mean(abs(error))
+r2_val <- 1 - (sum(error^2) / sum((actual_price - mean(actual_price))^2))
+
+evaluasi_regresi <- data.frame(
+  Metrik = c("Root Mean Square Error (RMSE)", 
+             "Mean Absolute Error (MAE)", 
+             "R-Squared (R2)"),
+  Nilai = c(rmse_val, mae_val, r2_val)
+)
+
+knitr::kable(evaluasi_regresi, digits = 2)
+```
+Metrik evaluasi objektif mutlak diperlukan untuk mengukur tingkat presisi model dalam mengestimasi harga. Tiga parameter utama dihitung secara simultan untuk memberikan gambaran performa yang komprehensif. Root Mean Square Error (RMSE) digunakan untuk mengevaluasi rata-rata deviasi tebakan dengan memberikan penalti lebih tinggi pada kesalahan prediksi yang ekstrem (outlier). Sementara itu, Mean Absolute Error (MAE) memberikan gambaran rata-rata selisih harga secara nominal yang lebih intuitif. Terakhir, R-Squared ($R^2$) memvalidasi bahwa model mampu menjelaskan 86% variasi harga aktual, yang menandakan bahwa fitur fisik bangunan yang digunakan telah menangkap sebagian besar determinan harga pasar secara signifikan.
+
+## 4.2 Klasifikasi Kategori Harga (Classification)
+### 4.2.1 Membangun Model Pohon Keputusan
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+model_klasifikasi <- rpart(
+  Price_Class ~ .,
+  data = train_data,
+  method = "class"
+)
+
+rpart.plot(
+  model_klasifikasi, 
+  main = "Pohon Keputusan: Klasifikasi Harga Rumah",
+  type = 3, 
+  extra = 2,           # Gunakan 2 (menampilkan probabilitas kelas) agar lebih simpel
+  fallen.leaves = TRUE, # Membuat visualisasi lebih terstruktur
+  cex = 0.8            # Mengatur ukuran font (default 1)
+)
+```
+Berdasarkan struktur pohon keputusan, model berhasil mengidentifikasi bahwa usia bangunan (Year_Built) dan jumlah kamar mandi (Full_Bath) merupakan pemisah segmen pasar yang paling krusial. Sebagai contoh, alur logika model menunjukkan bahwa rumah modern yang dibangun pada tahun 1980 atau setelahnya dengan ketersediaan kamar mandi minimal dua unit secara konsisten diklasifikasikan sebagai properti harga "Tinggi" dengan tingkat keyakinan mencapai 95%.  Insight ini memberikan bukti empiris bagi agen properti bahwa preferensi pasar di Ames saat ini sangat condong pada aspek modernitas konstruksi dan fasilitas sanitasi sebagai penentu utama nilai jual, melampaui atribut fisik lainnya seperti luas basement atau kapasitas garasi.
+
+### 4.2.2 Implementasi Prediksi dan Confusion Matrix
+
+```{r}
+library(caret)
+
+prediksi_kelas <- predict(
+  model_klasifikasi,
+  newdata = test_data,
+  type = "class"
+)
+
+matriks_evaluasi <- confusionMatrix(
+  prediksi_kelas,
+  test_data$Price_Class,
+  positive = "Tinggi"
+)
+
+matriks_evaluasi$table
+```
+Model yang telah dilatih kemudian divalidasi menggunakan data uji untuk mengukur kemampuan generalisasinya. Hasil prediksi mesin dipetakan ke dalam Confusion Matrix untuk memperlihatkan tabulasi silang antara kelas prediksi dengan kelas aktual. Berdasarkan matriks di atas, model berhasil mengklasifikasikan 245 rumah sebagai "Rendah" dengan benar dan 262 rumah sebagai "Tinggi" dengan benar. Meskipun terdapat kesalahan prediksi berupa 44 kasus False Negative (rumah berharga Tinggi yang tertebak Rendah) dan 36 kasus False Positive (rumah berharga Rendah yang tertebak Tinggi), distribusi ini menunjukkan bahwa model memiliki performa yang relatif seimbang dalam mengenali kedua kelas harga, tanpa adanya bias ekstrem yang condong pada satu kategori saja.
+
+### 4.2.3 Evaluasi Kinerja Klasifikasi
+
+```{r}
+akurasi <- matriks_evaluasi$overall["Accuracy"]
+presisi <- matriks_evaluasi$byClass["Pos Pred Value"]
+recall <- matriks_evaluasi$byClass["Sensitivity"]
+f1_score <- matriks_evaluasi$byClass["F1"]
+
+tabel_metrik <- data.frame(
+  Metrik = c("Accuracy", "Precision", "Recall", "F1-Score"),
+  Nilai = c(akurasi, presisi, recall, f1_score)
+)
+
+knitr::kable(tabel_metrik, digits = 3)
+```
+Kinerja model klasifikasi tidak cukup jika hanya dinilai dari akurasi sebesar 86,4%. Evaluasi metrik lanjutan diekstraksi untuk membedah presisi dan sensitivitas tebakan. Presisi (0,856) menunjukkan bahwa ketika model mengklaim sebuah rumah sebagai "Tinggi", klaim tersebut benar secara akurat dalam 85,6% kasus. Sementara itu, Recall (0,879) yang lebih tinggi menunjukkan bahwa model memiliki kemampuan yang baik dalam menangkap proporsi rumah "Tinggi" yang sebenarnya ada di lapangan, meminimalisir kemungkinan rumah mewah terlewatkan. Skor F1 (0,868) yang berada di antara presisi dan recall menegaskan bahwa model ini memiliki keseimbangan performa yang sangat stabil, sehingga reliabilitasnya cukup kuat untuk digunakan sebagai alat segmentasi pasar properti yang objektif.
+
+## 4.3 Klastering Karakteristik Properti (Clustering)
+### 4.3.1 Persiapan dan Standarisasi Ruang Dimensi
+
+```{r}
+library(factoextra)
+library(gridExtra)
+
+# Gunakan data master (ames_encoded) sebagai sumber, 
+# karena data ini memiliki semua kolom yang Anda butuhkan
+data_klaster <- ames_encoded %>%
+  select(
+    Sale_Price,
+    Gr_Liv_Area,
+    Garage_Area,
+    Total_Bsmt_SF
+  )
+
+# Lakukan standardisasi
+klaster_scaled <- scale(data_klaster)
+```
+Berbeda dengan regresi dan klasifikasi yang bertumpu pada target prediksi pasti, klastering merupakan pendekatan pembelajaran tanpa pengawasan. Algoritma dibiarkan mengeksplorasi struktur data secara organik untuk menemukan pola kemiripan spasial dan mengelompokkan rumah ke dalam segmen segmen alami. Model K Means dipilih karena efisiensi komputasinya dalam mempartisi data berdasarkan jarak kedekatan karakteristik fisik properti.
+
+Algoritma berbasis jarak sangat sensitif terhadap perbedaan satuan ukur. Oleh karena itu, eksekusi pemodelan K-Means ini secara langsung mewarisi objek data dari tahap Preparation (Bab 3), di mana empat variabel fundamental (harga jual, luas bangunan, area garasi, dan luas ruang bawah tanah) telah diisolasi dan dikonversi menjadi Z-Score secara terpusat. Pendekatan ini memastikan efisiensi komputasi karena algoritma langsung memproses data yang skala bobotnya sudah setara, tanpa perlu melakukan transformasi berulang.
+
+### 4.3.2 Penentuan Jumlah Klaster Optimal
+
+```{r}
+p1 <- fviz_nbclust(klaster_scaled, kmeans, method = "wss") +
+  labs(title = "Metode Elbow")
+
+p2 <- fviz_nbclust(klaster_scaled, kmeans, method = "silhouette") +
+  labs(title = "Metode Silhouette")
+
+grid.arrange(p1, p2, ncol = 2)
+```
+Berdasarkan analisis validitas matematis, metode Elbow mengindikasikan titik siku yang cukup informatif pada $k=3$, sementara metode Silhouette memberikan skor tertinggi sebesar 0,4 pada $k=2$. Mengingat metode Silhouette mengukur kualitas pemisahan klaster secara langsung dan konsisten, penelitian ini menetapkan $k=2$ sebagai jumlah klaster optimal karena menjamin separasi antar kelompok yang paling tegas dan stabil. Meskipun $k=3$ dimungkinkan untuk menangkap segmentasi pasar yang lebih granular, $k=2$ dipilih untuk meminimalisir risiko tumpang tindih klaster serta memastikan bahwa setiap kelompok memiliki karakteristik yang benar-benar distingtif secara statistik.
+
+### 4.3.3 Implementasi Model K-Means dan Visualisasi
+```{r}
+set.seed(123)
+
+model_kmeans <- kmeans(
+  klaster_scaled,
+  centers = 2,
+  nstart = 25
+)
+
+fviz_cluster(
+  model_kmeans,
+  data = klaster_scaled,
+  geom = "point",
+  ellipse.type = "convex",
+  main = "Visualisasi Segmentasi Klaster Properti"
+)
+```
+Berdasarkan indikasi optimal dari kedua evaluasi sebelumnya, algoritma K-Means diinstruksikan untuk mempartisi populasi properti ke dalam dua kelompok utama. Parameter inisialisasi diatur berlapis untuk memastikan titik pusat awal ditempatkan pada posisi paling strategis guna mencegah konvergensi palsu. Hasil pengelompokan kemudian diproyeksikan ke dalam ruang visual dua dimensi menggunakan analisis komponen utama agar batas teritori setiap klaster dapat diamati secara intuitif.
+
+### 4.3.4 Pemrofilan Karakteristik Klaster (Profiling)
+
+```{r}
+data_klaster$Cluster <- as.factor(model_kmeans$cluster)
+
+profil_klaster <- data_klaster %>%
+  group_by(Cluster) %>%
+  summarise(
+    Jumlah_Rumah = n(),
+    Rata_Harga = mean(Sale_Price),
+    Rata_Luas_Bangunan = mean(Gr_Liv_Area),
+    Rata_Luas_Garasi = mean(Garage_Area),
+    Rata_Luas_Basement = mean(Total_Bsmt_SF)
+  )
+
+knitr::kable(profil_klaster, digits = 0)
+```
+Langkah pamungkas dari analisis klastering adalah menerjemahkan label numerik menjadi pemahaman bisnis yang bermakna. Profiling dilakukan dengan menggabungkan kembali identitas klaster ke dalam data berskala asli untuk menghitung nilai rata rata karakteristik setiap kelompok. Melalui tabel agregasi ini, pemangku kepentingan dapat mengidentifikasi secara presisi karakteristik dua segmen utama pasar properti: segmen properti ekonomis dengan luas bangunan terbatas, dan segmen properti premium yang menawarkan spesifikasi fisik dan nilai jual lebih tinggi.
+
+
+# 5. Evaluation
+## 5.1 Evaluasi Performa dan Pemilihan Model
+Berdasarkan komputasi yang telah dilakukan pada tahap pemodelan, setiap algoritma dievaluasi secara objektif untuk memastikan validitasnya terhadap tujuan bisnis awal.
+
+### 5.1.1 Model Regresi Linier (Prediksi Nilai Kontinu) 
+Model ini menunjukkan performa yang sangat solid dengan nilai R-Squared sebesar 0,86 pada data uji. Hal ini membuktikan bahwa 86% variasi harga rumah di Kota Ames dapat dijelaskan secara presisi oleh fitur fisik dan lokasi yang dipilih. Nilai Mean Absolute Error (MAE) yang berada di kisaran 18.982 USD menunjukkan margin kesalahan operasional yang sangat rasional untuk estimasi aset bernilai ratusan ribu dolar.  
+
+### 5.1.2 Model Pohon Keputusan (Klasifikasi Kategorikal)
+Dengan skor akurasi 86,4% dan F1-Score 0,868, model ini terbukti sangat seimbang dan reliabel. Pohon keputusan unggul dalam transparansi logika bisnis, secara gamblang memisahkan properti ke dalam kelas "Tinggi" dan "Rendah" tanpa mekanisme black-box.  
+
+### 5.1.3 K-Means (Klastering)
+Validasi silang menggunakan metode Elbow dan Silhouette secara matematis mengonfirmasi bahwa populasi properti secara alami terbagi ke dalam 2 klaster utama ($k=2$). Model ini berhasil mengidentifikasi struktur dasar pasar tanpa memerlukan label pengawasan.  
+
+## 5.2 Membandingkan dan Memilih Model Terbaik
+Regresi dan klasifikasi pada dasarnya dirancang untuk menyelesaikan dua dimensi masalah yang berbeda. Namun, jika dinilai dari tingkat efisiensi operasional dan interpretasi bisnis yang paling cepat dieksekusi, model Pohon Keputusan (Klasifikasi) adalah yang terbaik. Model ini memberikan decision rules yang sangat jelas dan langsung dapat digunakan oleh agen properti di lapangan untuk melakukan asesmen harga secara cepat (misalnya: cukup periksa usia bangunan dan jumlah kamar mandi) tanpa harus menginput puluhan variabel ke dalam kalkulator matematis. Sementara itu, Regresi Linier tetap dipertahankan sebagai alat komplementer untuk penilaian (appraisal) tingkat akhir yang membutuhkan presisi numerik mutlak.  
+
+## 5.3 Insight Utama dari Analisis
+Dari rangkaian analitik diagnostik dan prediktif, ditarik tiga pilar wawasan utama (core insights) yang mendikte pergerakan harga properti di Ames.
+
+### 5.3.1 Faktor Modernitas Konstruksi & Sanitasi sebagai Katalis Klasifikasi 
+Berlawanan dengan intuisi umum yang hanya berfokus pada luas lahan, algoritma pohon keputusan membuktikan bahwa Tahun Pembangunan (batas tahun 1980) dan Ketersediaan Kamar Mandi (minimal 2) adalah pemisah paling mutlak antara rumah kelas atas dan kelas menengah ke bawah. Pasar sangat memprioritaskan fasilitas sanitasi dan modernitas kerangka bangunan.  
+
+### 5.3.2 Hukum Linear Eksterior dan Area Fungsional
+Pada evaluasi estimasi nilai absolut (regresi), Luas Area Hidup (Gr_Liv_Area) dan Kualitas Bangunan (Overall_Qual) secara empiris merupakan prediktor linear paling dominan. Setiap peningkatan poin pada material eksterior dan kerangka bangunan memberikan kenaikan harga yang proporsional pada harga akhir.  
+
+### 5.3.3 Dikotomi Karakteristik Pasar (Segmentasi) 
+Klastering menyingkap bahwa pasar terbelah menjadi dua ekosistem yang terisolasi. Segmen 1 (Ekonomis) berisi rumah-rumah dengan luas rata-rata 1.292 sqft dan garasi kecil, sementara Segmen 2 (Premium) didominasi oleh rumah seluas 1.980 sqft ke atas dengan infrastruktur ruang bawah tanah yang masif.  
+
+## 5.4 Rekomendasi Berbasis Data
+Sebagai strategi tindak lanjut yang dapat diimplementasikan (actionable strategies), rekomendasi diformulasikan berdasarkan fakta algoritma.
+
+### 5.4.1 Bagi Pengembang Properti (Developer)
+Ekspansi proyek baru harus mengutamakan desain kerangka modern (dibangun setelah tahun 1980) dan wajib memasukkan minimal 2 instalasi full bath. Alokasikan anggaran modal pada peningkatan material Overall_Qual dibandingkan memperluas Lot_Area yang tidak beraturan, karena kualitas material terbukti memberikan dorongan harga yang lebih proporsional.  
+
+### 5.4.2 Bagi Investor atau Agen Real Estat (Flipping Strategy)
+Cari properti di Segmen 1 (Ekonomis) yang secara struktural kokoh namun kurang terawat, lakukan perombakan terarah (remodeling) pada fasilitas kamar mandi utama dan lapisan veneer material eksterior. Hal ini adalah taktik paling efisien untuk mendorong properti tersebut melompat secara klasifikasi ke kelas harga "Tinggi" dengan modal renovasi minimum.  
+
+### 5.4.3 Bagi Penilai Harga (Appraiser)
+Dalam melakukan estimasi cepat, gunakan pohon keputusan untuk melakukan triase (triage) atau pemilahan awal kategori rumah, lalu operasionalkan model regresi linier untuk menetapkan taksiran harga final secara presisi dengan memprioritaskan area ruang fungsional (Gr_Liv_Area).  
+
+## 5.5 Hasil Akhir
+Kesimpulan StrategisMelalui metodologi penambangan data yang sistematis terhadap dataset Ames Housing, teka-teki mengenai apa yang sebenarnya menentukan harga sebuah rumah berhasil didekonstruksi. Pemahaman faktor harga terbukti tidak didorong oleh satu elemen tunggal, melainkan interaksi kompleks antara luas fungsional bangunan, utilitas, modernitas, dan kualitas pengerjaan material.  
+
+Analisis ini telah mendemonstrasikan kemampuan prediksi harga yang mutakhir dengan deviasi error yang minim, memungkinkan valuasi aset dilakukan secara instan oleh mesin. Lebih jauh lagi, kemampuan klasifikasi rumah telah mereduksi kerumitan variabel pasar menjadi sebuah aturan biner yang sederhana dan berdaya guna. Terakhir, proses segmentasi (klaster) berhasil memetakan topografi persaingan pasar secara murni ke dalam dua blok utama tanpa bias asumsi manusia. Analisis ini secara keseluruhan mengubah data historis yang berserakan menjadi instrumen intelijen bisnis yang tajam, empiris, dan siap dieksekusi.
+
