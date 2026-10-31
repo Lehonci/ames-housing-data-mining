@@ -4,7 +4,7 @@ Project ini berisi analisis Data Mining untuk memprediksi harga rumah menggunaka
 
 ## Live Interactive Report
 Laporan lengkap hasil analisis dan visualisasi dapat diakses secara langsung melalui link berikut:
-[**Lihat Laporan Interactive HTML**](https://username.github.io/ames-housing-data-mining/)
+[**Lihat Laporan Interactive HTML**](https://lehonci.github.io/ames-housing-data-mining/)
 
 ## Tech Stack & Tools
 * **Language**: R
